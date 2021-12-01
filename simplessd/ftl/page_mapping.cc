@@ -206,6 +206,7 @@ bool PageMapping::initialize() {
     bloomFilters.push_back(bloom_filter(parameters));
   }
 
+  refresh_period = conf.readUint(CONFIG_FTL, FTL_REFRESH_PERIOD);
   // set up periodic refresh event
   if (conf.readUint(CONFIG_FTL, FTL_REFRESH_PERIOD) > 0) {
     refreshEvent = engine.allocateEvent([this](uint64_t tick) {
@@ -240,48 +241,52 @@ bool PageMapping::initialize() {
 }
 
 void PageMapping::refresh_event(uint64_t tick){
-  int num_layer = tick;
-  num_layer = 10000;
+  uint32_t num_block = param.totalPhysicalBlocks;
+  uint32_t num_layer = 64;
+
   unsigned int target_bf = 0;
-  int RC_copy = stat.refreshCount;
+  uint64_t RC_copy = stat.refreshCallCount;
+  //uint64_t tick_old = tick;
 
   while (target_bf<bloomFilters.size()-1){
-    if (RC_copy%2 == 0){
+    if ((RC_copy&1) == 0){
       target_bf++;
-      RC_copy /= 2;
+      RC_copy= RC_copy>>1;
     }
     else{
       break;
     }
   }
-
-  for (int i=0; i<num_layer;i++){
-    if (bloomFilters[target_bf].contains(i)){
-      continue;
-      //refresh layer
+  for (uint32_t i=0; i<num_block;i++){
+    for (uint32_t j=0; j<num_layer;j++){
+      if (bloomFilters[target_bf].contains(std::pair<uint32_t,uint32_t>(i, j))){
+        //refresh layer
+        refreshPage(i,j,tick);
+      }
     }
   }
-  stat.refreshCount++;
+  stat.refreshCallCount++;
+  // stat.refreshTick += tick - tick_old;
 }
-/*
+
 // insert to bloom filter depending on its retention capability
 void PageMapping::setRefreshPeriod(uint32_t block_id, uint32_t layer_id, uint64_t rtc){
   auto item = std::pair<uint32_t,uint32_t>(block_id, layer_id);
-  int factor = 0;
-  int refresh_slot = rtc/refresh_time;
+  uint32_t factor = 0;
+  uint32_t refresh_slot = rtc/refresh_period;
   while (refresh_slot != 0){
     refresh_slot = refresh_slot>>1;
     factor++;
-    if (factor == bfs.size()){
+    if (factor == bloomFilters.size()){
       break;
     }
   }
-  while(factor<bfs.size()){
-    bfs[factor].insert(item);
+  while(factor<bloomFilters.size()){
+    bloomFilters[factor].insert(item);
     factor++;
   }
 }
-*/
+
 
 void PageMapping::read(Request &req, uint64_t &tick) {
   uint64_t begin = tick;
@@ -993,7 +998,8 @@ void PageMapping::refreshPage(uint32_t blockIndex, uint32_t layerNum,
   }
 
   // Copy valid pages to free block
-  for (uint32_t pageIndex = layerNum; pageIndex < param.pagesInBlock; pageIndex += layerNum) {
+  // pageIndex is n*layerNum??
+  for (uint32_t pageIndex = layerNum; pageIndex < param.pagesInBlock; pageIndex += 64) {
     //debugprint(LOG_FTL_PAGE_MAPPING, "Check valid");
     // Valid?
     if (block->second.getValidPageCount()) {

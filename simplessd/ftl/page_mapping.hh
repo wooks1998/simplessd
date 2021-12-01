@@ -77,6 +77,7 @@ class PageMapping : public AbstractFTL {
   ErrorModeling errorModel;
 
   std::vector<bloom_filter> bloomFilters;
+  uint64_t refresh_period;
 
   void refresh_event(uint64_t);
   void setRefreshPeriod(uint32_t block_id, uint32_t layer_id, uint64_t rtc);
