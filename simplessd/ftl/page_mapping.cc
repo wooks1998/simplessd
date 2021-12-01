@@ -26,6 +26,8 @@
 #include "util/algorithm.hh"
 #include "util/bitset.hh"
 
+SimpleSSD::Event refreshEvent;
+
 namespace SimpleSSD {
 
 namespace FTL {
@@ -185,6 +187,40 @@ bool PageMapping::initialize() {
     }
   }
 
+  //setup refresh
+  uint64_t random_seed = conf.readUint(CONFIG_FTL, FTL_RANDOM_SEED);
+  uint32_t num_bf = conf.readUint(CONFIG_FTL, FTL_REFRESH_FILTER_NUM);
+  uint32_t filter_size = conf.readUint(CONFIG_FTL, FTL_REFRESH_FILTER_SIZE);
+  //multi level bloom filter
+  for (unsigned int i=0; i<num_bf; i++){
+    bloom_parameters parameters;
+
+    parameters.projected_element_count = 100;
+    parameters.false_positive_probability = 0.0001; // 1 in 10000
+    parameters.random_seed = random_seed++;
+    if (filter_size){
+      parameters.maximum_size = filter_size;
+    }
+
+    parameters.compute_optimal_parameters();
+    bloomFilters.push_back(bloom_filter(parameters));
+  }
+
+  // set up periodic refresh event
+  if (conf.readUint(CONFIG_FTL, FTL_REFRESH_PERIOD) > 0) {
+    refreshEvent = engine.allocateEvent([this](uint64_t tick) {
+      refresh_event(tick);
+
+      engine.scheduleEvent(
+          refreshEvent,
+          tick + conf.readUint(CONFIG_FTL, FTL_REFRESH_PERIOD) *
+                     1000000000ULL);
+    });
+    engine.scheduleEvent(
+        refreshEvent,
+        conf.readUint(CONFIG_FTL, FTL_REFRESH_PERIOD) * 1000000000ULL);
+  }
+
   // Report
   calculateTotalPages(valid, invalid);
   debugprint(LOG_FTL_PAGE_MAPPING, "Filling finished. Page status:");
@@ -202,6 +238,50 @@ bool PageMapping::initialize() {
 
   return true;
 }
+
+void PageMapping::refresh_event(uint64_t tick){
+  int num_layer = tick;
+  num_layer = 10000;
+  unsigned int target_bf = 0;
+  int RC_copy = stat.refreshCount;
+
+  while (target_bf<bloomFilters.size()-1){
+    if (RC_copy%2 == 0){
+      target_bf++;
+      RC_copy /= 2;
+    }
+    else{
+      break;
+    }
+  }
+
+  for (int i=0; i<num_layer;i++){
+    if (bloomFilters[target_bf].contains(i)){
+      continue;
+      //refresh layer
+    }
+  }
+  stat.refreshCount++;
+}
+/*
+// insert to bloom filter depending on its retention capability
+void PageMapping::setRefreshPeriod(uint32_t block_id, uint32_t layer_id, uint64_t rtc){
+  auto item = std::pair<uint32_t,uint32_t>(block_id, layer_id);
+  int factor = 0;
+  int refresh_slot = rtc/refresh_time;
+  while (refresh_slot != 0){
+    refresh_slot = refresh_slot>>1;
+    factor++;
+    if (factor == bfs.size()){
+      break;
+    }
+  }
+  while(factor<bfs.size()){
+    bfs[factor].insert(item);
+    factor++;
+  }
+}
+*/
 
 void PageMapping::read(Request &req, uint64_t &tick) {
   uint64_t begin = tick;
@@ -1199,7 +1279,9 @@ void PageMapping::writeInternal(Request &req, uint64_t &tick, bool sendToPAL) {
       uint32_t eraseCount = block->second.getEraseCount();
       uint32_t layerNumber = mapping.second % 64;
       uint64_t newErrorCount = errorModel.getRandError(0, eraseCount, layerNumber);
-
+      if (newErrorCount){
+        continue;
+      }
       //TODO: Now error count can be used to put layer to bloom filter
 
     }
@@ -1440,6 +1522,10 @@ void PageMapping::getStatList(std::vector<Stats> &list, std::string prefix) {
   temp.desc = "Total copied valid pages during Refresh";
   list.push_back(temp);
 
+  temp.name = prefix + "page_mapping.refresh.call_count";
+  temp.desc = "The number of refresh call";
+  list.push_back(temp);
+
   temp.name = prefix + "page_mapping.refresh.error_counts";
   temp.desc = "The average number of errors";
   list.push_back(temp);
@@ -1467,6 +1553,7 @@ void PageMapping::getStatValues(std::vector<double> &values) {
   values.push_back(stat.refreshedBlocks);
   values.push_back(stat.refreshSuperPageCopies);
   values.push_back(stat.refreshPageCopies);
+  values.push_back(stat.refreshCallCount);
 
   values.push_back(calculateAverageError());
   values.push_back(calculateWearLeveling());

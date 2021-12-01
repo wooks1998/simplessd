@@ -31,6 +31,11 @@
 
 #include "ftl/error_modeling.hh"
 
+#include "ftl/bloom_filter.hh" // for bloom filter
+#include "sim/engine.hh"
+
+extern Engine engine;
+
 namespace SimpleSSD {
 
 namespace FTL {
@@ -64,12 +69,17 @@ class PageMapping : public AbstractFTL {
     uint64_t refreshedBlocks;
     uint64_t refreshSuperPageCopies;
     uint64_t refreshPageCopies;
+    uint64_t refreshCallCount;
   } stat;
 
   uint64_t lastRefreshed;
 
   ErrorModeling errorModel;
 
+  std::vector<bloom_filter> bloomFilters;
+
+  void refresh_event(uint64_t);
+  void setRefreshPeriod(uint32_t block_id, uint32_t layer_id, uint64_t rtc);
   float freeBlockRatio();
   uint32_t convertBlockIdx(uint32_t);
   uint32_t getFreeBlock(uint32_t);
