@@ -107,6 +107,7 @@ public:
 
    virtual bool compute_optimal_parameters()
    {
+      while (true){
       /*
         Note:
         The following will attempt to find the number of hash functions
@@ -114,6 +115,9 @@ public:
         filter consistent with the user defined false positive probability
         and estimated element insertion count.
       */
+     if (false_positive_probability > 2){
+        assert(0);
+     }
 
       if (!(*this))
          return false;
@@ -147,16 +151,20 @@ public:
       optp.table_size += (((optp.table_size % bits_per_char) != 0) ? (bits_per_char - (optp.table_size % bits_per_char)) : 0);
 
       if (optp.number_of_hashes < minimum_number_of_hashes)
-         optp.number_of_hashes = minimum_number_of_hashes;
-      else if (optp.number_of_hashes > maximum_number_of_hashes)
-         optp.number_of_hashes = maximum_number_of_hashes;
+         optimal_parameters.number_of_hashes = minimum_number_of_hashes;
+      else if (optp.number_of_hashes > maximum_number_of_hashes){
+         false_positive_probability *= 1.2;
+         continue;
+      }
 
       if (optp.table_size < minimum_size)
-         optp.table_size = minimum_size;
-      else if (optp.table_size > maximum_size)
-         optp.table_size = maximum_size;
-
+         optimal_parameters.table_size = minimum_size;
+      else if (optp.table_size > maximum_size){
+         false_positive_probability *= 1.2;
+         continue;
+      }
       return true;
+   }
    }
 
 };

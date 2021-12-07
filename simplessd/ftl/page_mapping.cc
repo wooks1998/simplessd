@@ -191,7 +191,8 @@ bool PageMapping::initialize() {
   }
 
   //setup refresh
-  uint64_t random_seed = conf.readUint(CONFIG_FTL, FTL_RANDOM_SEED);
+  refreshStatFile.open("/home/wooks/SimpleSSD-base/log/refresh_web_2_2hour_400s_30d_log.txt");
+  uint64_t random_seed = conf.readUint(CONFIG_FTL, FTL_RANDOM_SEED) + 1231;
   uint32_t num_bf = conf.readUint(CONFIG_FTL, FTL_REFRESH_FILTER_NUM);
   uint32_t filter_size = conf.readUint(CONFIG_FTL, FTL_REFRESH_FILTER_SIZE);
   debugprint(LOG_FTL_PAGE_MAPPING, "Refresh setting start. The number of bloom filters: %u", num_bf);
@@ -200,14 +201,24 @@ bool PageMapping::initialize() {
   for (unsigned int i=0; i<=num_bf; i++){
     bloom_parameters parameters;
 
-    parameters.projected_element_count = 150000;
-    parameters.false_positive_probability = 1.0E-10; // 1 in 10^10
+    parameters.projected_element_count = 10000;
+    parameters.false_positive_probability = 1.0E-6; // 1 in 10^10
     parameters.random_seed = random_seed++;
     if (filter_size){
       parameters.maximum_size = filter_size;
+      parameters.minimum_size = filter_size;
     }
 
     parameters.compute_optimal_parameters();
+    refreshStatFile << parameters.maximum_number_of_hashes << ", " \
+                    << parameters.maximum_size << ", " \
+                    << parameters.minimum_number_of_hashes << ", " \
+                    << parameters.minimum_size << ", " \
+                    << parameters.optimal_parameters.number_of_hashes << ", " \
+                    << parameters.optimal_parameters.table_size << ", " \
+                    << parameters.false_positive_probability << ", " \
+                    << parameters.random_seed << ", " \
+                    << parameters.projected_element_count << "\n\n";
     if (i != 0){  // Bloom filter size == 0 for first calculated parameters. I don't know why
     auto newBloom = bloom_filter(parameters);
     newBloom.clear();
@@ -241,8 +252,8 @@ bool PageMapping::initialize() {
         conf.readUint(CONFIG_FTL, FTL_REFRESH_PERIOD) * 1000000000ULL);
   }
 
-  refreshStatFile.open("/home/wooks/SimpleSSD-base/log/refresh_web_2_2hour_400s_30d_log.txt");
   stat.refreshCallCount = 1;
+  bloomFilters[0].false_positive = 0;
   debugprint(LOG_FTL_PAGE_MAPPING, "Refresh setting done. The number of bloom filters: %u", bloomFilters.size());
   for (uint32_t target_bf=0; target_bf<bloomFilters.size(); target_bf++){
     refreshStatFile << "bloomfilter_stat" << target_bf << endl;
